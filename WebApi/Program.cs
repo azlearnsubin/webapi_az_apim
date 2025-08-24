@@ -80,4 +80,42 @@ app.MapPost("/users", async (User user, HttpClient httpClient) =>
     .WithName("CreateUser")
     .WithOpenApi();
 
+app.MapGet("/jwt-info", (HttpContext context) =>
+{
+    var jwtInfo = new
+    {
+        Message = "JWT validation successful!",
+        ExtractedClaims = new
+        {
+            UserId = context.Request.Headers["X-User-ID"].FirstOrDefault(),
+            UserName = context.Request.Headers["X-User-Name"].FirstOrDefault(),
+            UserEmail = context.Request.Headers["X-User-Email"].FirstOrDefault(),
+            UserRoles = context.Request.Headers["X-User-Roles"].FirstOrDefault()
+        },
+        AllHeaders = context.Request.Headers
+            .Where(h => h.Key.StartsWith("X-"))
+            .ToDictionary(h => h.Key, h => h.Value.ToString()),
+        Timestamp = DateTime.UtcNow
+    };
+    
+    return Results.Ok(jwtInfo);
+});
+
+app.MapGet("/admin-only", (HttpContext context) =>
+{
+    var userRoles = context.Request.Headers["X-User-Roles"].FirstOrDefault() ?? "";
+    
+    if (!userRoles.Contains("admin"))
+    {
+        return Results.Forbid();
+    }
+    
+    return Results.Ok(new
+    {
+        Message = "Welcome admin!",
+        AdminData = "Secret admin information",
+        UserId = context.Request.Headers["X-User-ID"].FirstOrDefault()
+    });
+});
+
 app.Run();
