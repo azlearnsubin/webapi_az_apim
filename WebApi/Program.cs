@@ -1,5 +1,7 @@
 using WebApi.Models;
 using System.Text.Json;
+using Azure.Identity;
+using Azure.Messaging.ServiceBus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,6 +10,37 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
+
+var serviceBusNamespace = builder.Configuration["ServiceBus:Namespace"];
+var useConnectionString = builder.Configuration.GetValue<bool>("ServiceBus:UseConnectionString", false);
+builder.Services.AddSingleton<ServiceBusClient>(provider =>
+{
+    if (useConnectionString)
+    {
+        var connectionString = builder.Configuration.GetConnectionString("ServiceBus");
+        return new ServiceBusClient(connectionString);
+    }
+    else
+    {
+        // Use Managed Identity (recommended for production)
+        var credential = new DefaultAzureCredential();
+        return new ServiceBusClient($"https://{serviceBusNamespace}/", credential);
+    }
+    
+});
+
+//Register Sender and processors
+builder.Services.AddScoped<ServiceBusSender>(provider =>
+{
+    var client = provider.GetService<ServiceBusClient>();
+    return client!.CreateSender("myqueue");
+});
+
+builder.Services.AddScoped<ServiceBusProcessor>(provider =>
+{
+    var client = provider.GetService<ServiceBusClient>();
+    return client!.CreateProcessor("myqueue", new ServiceBusProcessorOptions());
+});
 
 var app = builder.Build();
 
@@ -116,6 +149,86 @@ app.MapGet("/admin-only", (HttpContext context) =>
         AdminData = "Secret admin information",
         UserId = context.Request.Headers["X-User-ID"].FirstOrDefault()
     });
+});
+
+// Send message to queue
+app.MapPost("/send-message", async (ServiceBusSender sender, string message) =>
+{
+    try
+    {
+        var serviceBusMessage = new ServiceBusMessage(message);
+        await sender.SendMessageAsync(serviceBusMessage);
+        return Results.Ok($"Message sent: {message}");
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest($"Error: {ex.Message}");
+    }
+});
+
+// Send message to topic
+app.MapPost("/send-topic-message", async (ServiceBusClient client, string message) =>
+{
+    try
+    {
+        var sender = client.CreateSender("mytopic");
+        var serviceBusMessage = new ServiceBusMessage(message);
+        await sender.SendMessageAsync(serviceBusMessage);
+        await sender.DisposeAsync();
+        return Results.Ok($"Topic message sent: {message}");
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest($"Error: {ex.Message}");
+    }
+});
+
+// Get messages from queue
+app.MapGet("/receive-messages", async (ServiceBusClient client) =>
+{
+    try
+    {
+        //PeekLock: Message is locked for processing, must be completed/abandoned
+        //ReceiveAndDelete: Message is immediately removed (less reliable)
+        var receiver = client.CreateReceiver("myqueue");
+        var messages = new List<string>();
+        
+        // Receive up to 10 messages
+        var receivedMessages = await receiver.ReceiveMessagesAsync(maxMessages: 10, maxWaitTime: TimeSpan.FromSeconds(5));
+        
+        foreach (var message in receivedMessages)
+        {
+            messages.Add(message.Body.ToString());
+            await receiver.CompleteMessageAsync(message); // Remove from queue
+        }
+        
+        await receiver.DisposeAsync();
+        return Results.Ok(messages);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest($"Error: {ex.Message}");
+    }
+});
+
+// Background service for processing messages
+app.MapPost("/start-message-processor", async (ServiceBusProcessor processor) =>
+{
+    processor.ProcessMessageAsync += async args =>
+    {
+        var message = args.Message.Body.ToString();
+        Console.WriteLine($"Processed message: {message}");
+        await args.CompleteMessageAsync(args.Message);
+    };
+
+    processor.ProcessErrorAsync += args =>
+    {
+        Console.WriteLine($"Error: {args.Exception}");
+        return Task.CompletedTask;
+    };
+
+    await processor.StartProcessingAsync();
+    return Results.Ok("Message processor started");
 });
 
 app.Run();
