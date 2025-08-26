@@ -2,6 +2,7 @@ using WebApi.Models;
 using System.Text.Json;
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using WebApi.EFCoreContext;
 
@@ -56,6 +57,15 @@ builder.Services.AddAuthentication()
     {
         options.Authority = "https://login.microsoftonline.com/4636cb09-8051-4958-8099-8b0b0e6edb47/v2.0";
         options.Audience = "56d2c612-0387-41e7-a82a-8fa4abc0d9dd";
+
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                Console.WriteLine($"Authentication failed: {context.Exception}");
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorizationBuilder();
@@ -72,6 +82,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGet("/posts", async (HttpClient httpClient) =>
     {
