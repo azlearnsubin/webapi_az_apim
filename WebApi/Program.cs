@@ -71,6 +71,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseAuthentication();
+
 app.MapGet("/posts", async (HttpClient httpClient) =>
     {
         var response = await httpClient.GetStringAsync("https://jsonplaceholder.typicode.com/posts");
