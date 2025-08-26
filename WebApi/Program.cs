@@ -2,6 +2,8 @@ using WebApi.Models;
 using System.Text.Json;
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
+using Microsoft.EntityFrameworkCore;
+using WebApi.EFCoreContext;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -40,6 +42,13 @@ builder.Services.AddScoped<ServiceBusProcessor>(provider =>
 {
     var client = provider.GetService<ServiceBusClient>();
     return client!.CreateProcessor("myqueue", new ServiceBusProcessorOptions());
+});
+
+//Azure SQL
+builder.Services.AddDbContext<AppDbContext>(options =>
+{
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    options.UseSqlServer(connectionString);
 });
 
 var app = builder.Build();
@@ -230,5 +239,65 @@ app.MapPost("/start-message-processor", async (ServiceBusProcessor processor) =>
     await processor.StartProcessingAsync();
     return Results.Ok("Message processor started");
 });
+
+// Database operations
+app.MapGet("/products", async (AppDbContext context) =>
+{
+    try
+    {
+        var products = await context.Products.ToListAsync();
+        return Results.Ok(products);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Error retrieving products: {ex.Message}");
+    }
+});
+
+
+//Apply migrations
+using (var scope = app.Services.CreateScope())
+{
+    try
+    {
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        
+        // Test connection first
+        if (await context.Database.CanConnectAsync())
+        {
+            try
+            {
+                if (!await context.Products.AnyAsync())
+                {
+                    Console.WriteLine("Seeding initial data...");
+                    context.Products.AddRange(
+                        new Product { Name = "Laptop", Price = 999.99m, Description = "Gaming laptop" },
+                        new Product { Name = "Mouse", Price = 29.99m, Description = "Wireless mouse" },
+                        new Product { Name = "Keyboard", Price = 79.99m, Description = "Mechanical keyboard" }
+                    );
+                    await context.SaveChangesAsync();
+                    Console.WriteLine("Data seeding completed");
+                }
+                else
+                {
+                    Console.WriteLine("Data already exists, skipping seeding");
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                throw;
+            }
+        }
+        else
+        {
+            Console.WriteLine("Could not connect to database during startup");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Startup database operation error: {ex.Message}");
+    }
+}
 
 app.Run();
