@@ -140,6 +140,29 @@ app.MapGet("/users/{id}", async (int id, HttpClient httpClient) =>
     .WithName("GetUser")
     .WithOpenApi();
 
+app.MapPost("/api/AX/CreateUpdateAccount",(AccountRequest request,HttpContext context) => 
+{
+    try
+    {
+        var user = context.User;
+        var userEmail = user.FindFirst("preferred_username")?.Value ?? "unknown";
+        var userId = user.FindFirst("sub")?.Value ?? "unknown";
+        
+        return Results.Ok(new { 
+            success = true, 
+            message = "Account created/updated successfully",
+            timestamp = DateTime.UtcNow,
+            createdBy = userEmail,
+            userID = userId
+        });
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine(e);
+        throw;
+    }
+}).RequireAuthorization();
+
 app.MapPost("/posts", async (Post post, HttpClient httpClient) =>
     {
         var json = JsonSerializer.Serialize(post, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
